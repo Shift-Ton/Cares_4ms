@@ -5,7 +5,7 @@
 
 const CONFIG = {
     DEBOUNCE_MS: 150,
-    STALE_THRESHOLD_MS: 300000,
+    STALE_THRESHOLD_MS: 300000,A
     AUTO_REFRESH_INTERVAL_MS: 60000,
     LIVE_INDICATOR_DURATION_MS: 2000,
     JSONP_TIMEOUT_MS: 90000,
@@ -205,6 +205,15 @@ class DashboardApp {
         this.editAuthorized = false;
         this.selectedEditRow = null;
         this.isSavingEdits = false;
+        this.pendingEdits = {};
+        this.originalRowSnapshots = {};
+        // Keeps the record search isolated from browser/password-manager autofill
+        // while the editor authorization dialog is open. Without this guard,
+        // Chrome can incorrectly place the saved login name (for example,
+        // "AdminTon") inside the table search field and hide every row.
+        this._editAuthSearchSnapshot = null;
+        this._editAuthSearchGuardUntil = 0;
+        this._editAuthSearchRestoreTimers = [];
         this.draggedColumn = null;
         this._emptyStateResizeObserver = null;
         this.EDITABLE_KEYS = ['email','telephone','facebook','homeAddress','degree','yearGraduated','campus','position','employer'];
@@ -262,6 +271,7 @@ class DashboardApp {
         this.loadEncodedRecords();
         this.bindEvents();
         this.initSearchClear();
+        this.ensureEditRuntimeStyles();
 
         // Load the shared endpoint configuration before the first data request.
         // Previously, the dashboard started fetching with stale local endpoints
@@ -277,6 +287,29 @@ class DashboardApp {
     syncViewportHeight() {
         const viewportHeight = window.visualViewport?.height || window.innerHeight;
         document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+    }
+
+    ensureEditRuntimeStyles() {
+        if (document.getElementById('edit-runtime-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'edit-runtime-styles';
+        style.textContent = `
+            .edit-selected-row::after {
+                content: "Editing this row • click another row to continue" !important;
+                background: #d97706 !important;
+            }
+            .edit-pending-row:not(.edit-selected-row) {
+                background: linear-gradient(90deg, rgba(5,150,105,.10), rgba(5,150,105,.025)) !important;
+                box-shadow: inset 4px 0 0 #059669;
+            }
+            [data-theme="dark"] .edit-pending-row:not(.edit-selected-row) {
+                background: linear-gradient(90deg, rgba(16,185,129,.16), rgba(16,185,129,.04)) !important;
+            }
+            .footer-save-action:disabled {
+                pointer-events: none;
+            }
+        `;
+        document.head.appendChild(style);
     }
 
     async checkLogin() {
@@ -1753,12 +1786,15 @@ class DashboardApp {
             const isSpeaking = this.isSpeaking && this.currentSpeakIndex === index;
             const recId = this.getEncodedKey(r);
             const isSelected = this.settings.editMode && this.selectedEditRow === recId;
+            const pendingSummary = this.getPendingRowSummary(recId);
+            const hasPendingChanges = pendingSummary.changedFields > 0;
             const rowClass = [];
             if (isDuplicate) rowClass.push('duplicate-row');
             if (isNew) rowClass.push('new-record');
             if (isMatched) rowClass.push('schedule-matched');
             if (isSpeaking) rowClass.push('speaking-row');
             if (this.settings.editMode) rowClass.push('edit-mode-row');
+            if (hasPendingChanges) rowClass.push('edit-pending-row');
             if (isSelected) rowClass.push('edit-selected-row');
             // Double-click-to-save has been REMOVED. Editing Mode is now
             // controlled entirely by the unified Edit↔Save button — rows
@@ -1767,13 +1803,19 @@ class DashboardApp {
             const editAttrs = this.settings.editMode
                 ? ` data-row-id="${this.escapeHtml(recId)}" onclick="app.handleEditRowClick(event, '${this.escapeHtml(recId)}')"`
                 : '';
-            rowsHtml += `<tr class="${rowClass.join(' ')}" data-speak-index="${index}"${editAttrs}>`;
+            const pendingAttrs = hasPendingChanges
+                ? ` data-pending-fields="${pendingSummary.changedFields}" title="${pendingSummary.changedFields} unsaved field change${pendingSummary.changedFields === 1 ? '' : 's'} in this row"`
+                : '';
+            rowsHtml += `<tr class="${rowClass.join(' ')}" data-speak-index="${index}"${editAttrs}${pendingAttrs}>`;
             renderedColumns.forEach(col => {
                 const hiddenClass = this.isColumnVisible(page, col.key) ? '' : ' column-hidden';
                 const columnAttr = ` data-column-key="${this.escapeHtml(col.key)}"`;
                 if (col.key === '__rowNum') {
                     const sheetRowNum = this.getSheetRowNumber(r, startIndex + index + 1);
-                    rowsHtml += `<td class="row-num-cell${hiddenClass}"${columnAttr} title="Google Sheet row number">${sheetRowNum}</td>`;
+                    const pendingBadge = hasPendingChanges
+                        ? `<span aria-label="${pendingSummary.changedFields} unsaved changes" title="${pendingSummary.changedFields} unsaved field change${pendingSummary.changedFields === 1 ? '' : 's'}" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:2px 6px;border-radius:999px;background:#dcfce7;color:#047857;font-size:10px;font-weight:800;white-space:nowrap;"><i class="fas fa-pen" aria-hidden="true"></i>${pendingSummary.changedFields}</span>`
+                        : '';
+                    rowsHtml += `<td class="row-num-cell${hiddenClass}"${columnAttr} title="Google Sheet row number">${sheetRowNum}${pendingBadge}</td>`;
                 } else {
                     const cellEditable = isSelected && this.EDITABLE_KEYS.includes(col.key);
                     const cellClass = `${cellEditable ? 'editable-cell' : ''}${hiddenClass}`.trim();
@@ -2079,9 +2121,17 @@ class DashboardApp {
         if (!mod) return '';
 
         const orderedColumns = this.getOrderedColumns(page);
+        const pendingCounts = this.countPendingChangedRows();
+        const saveDisabled = pendingCounts.changedRows === 0 ? ' disabled aria-disabled="true"' : '';
+        const saveTitle = pendingCounts.changedRows === 0
+            ? 'No pending changes yet'
+            : `Save ${pendingCounts.changedFields} change${pendingCounts.changedFields === 1 ? '' : 's'} across ${pendingCounts.changedRows} row${pendingCounts.changedRows === 1 ? '' : 's'}`;
+        const saveBadge = pendingCounts.changedRows > 0
+            ? `<span aria-hidden="true" style="position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#059669;color:#fff;border:2px solid var(--bg-card);font-size:10px;font-weight:800;line-height:13px;text-align:center;">${pendingCounts.changedRows}</span>`
+            : '';
         const editActions = this.settings.editMode
-            ? `<button type="button" class="footer-table-action footer-save-action" onclick="app.openSaveConfirmModal()" title="Save all pending changes" aria-label="Save all pending changes"><i class="fas fa-save"></i></button>
-               <button type="button" class="footer-table-action active" onclick="app.toggleEditMode()" title="Cancel edit mode" aria-label="Cancel edit mode"><i class="fas fa-xmark"></i></button>`
+            ? `<button type="button" class="footer-table-action footer-save-action" style="position:relative;${pendingCounts.changedRows === 0 ? 'opacity:.5;cursor:not-allowed;' : ''}" onclick="app.openSaveConfirmModal()" title="${saveTitle}" aria-label="${saveTitle}"${saveDisabled}><i class="fas fa-save"></i>${saveBadge}</button>
+               <button type="button" class="footer-table-action active" onclick="app.toggleEditMode()" title="Cancel edit mode and discard pending changes" aria-label="Cancel edit mode and discard pending changes"><i class="fas fa-xmark"></i></button>`
             : `<button type="button" class="footer-table-action" onclick="app.toggleEditMode()" title="Edit records" aria-label="Edit records"><i class="fas fa-pen-to-square"></i></button>`;
 
         return `<div class="pagination-table-actions" aria-label="Table actions">
@@ -2201,18 +2251,37 @@ class DashboardApp {
     }
 
     renderCell(r, col, page, isMatched, isSelected) {
-        // Render editable input for selected row + editable column
-        if (isSelected && this.EDITABLE_KEYS.includes(col.key)) {
-            const val = col.computed ? this.formatRow(r, col.key, page) : (r[col.key] || '');
-            const safeVal = this.escapeHtml(String(val || ''));
-            const recId = this.getEncodedKey(r);
-            // ondblclick handler removed — double-click no longer triggers a save;
-            // it now simply behaves like a normal text-select on the input.
-                        const inputType = col.key === 'email' ? 'email' : 'text';
-            const emailAttrs = col.key === 'email' ? ' inputmode="email" autocomplete="email" spellcheck="false"' : '';
-            return `<input type="${inputType}" class="inline-edit-input" data-field="${col.key}" data-row-id="${this.escapeHtml(recId)}" value="${safeVal}"${emailAttrs} onclick="event.stopPropagation()" oninput="app.trackEditChange('${this.escapeHtml(recId)}', '${col.key}', this.value)">`;
+        const recId = this.getEncodedKey(r);
+        const isEditableField = this.EDITABLE_KEYS.includes(col.key);
+        const hasPendingValue = isEditableField && this.hasPendingEditValue(recId, col.key);
+        const pendingValue = hasPendingValue
+            ? this.getPendingEditValue(recId, col.key, '')
+            : undefined;
+        const pendingChanged = hasPendingValue && this.isPendingFieldChanged(recId, col.key);
+
+        // Render editable input for the selected row. The value is read from
+        // pendingEdits first, so returning to a previously edited row restores
+        // exactly what the user typed instead of reverting to the sheet value.
+        if (isSelected && isEditableField) {
+            const originalValue = col.computed ? this.formatRow(r, col.key, page) : (r[col.key] || '');
+            const val = hasPendingValue ? pendingValue : originalValue;
+            const safeVal = this.escapeHtml(String(val == null ? '' : val));
+            const inputType = col.key === 'email' ? 'email' : 'text';
+            const emailAttrs = col.key === 'email'
+                ? ' inputmode="email" autocomplete="email" spellcheck="false"'
+                : ' autocomplete="off"';
+            const dirtyAttrs = pendingChanged
+                ? ' data-dirty="true" title="Unsaved change" style="border-color:#059669;box-shadow:0 0 0 3px rgba(5,150,105,.16);"'
+                : '';
+            return `<input type="${inputType}" class="inline-edit-input" data-field="${col.key}" data-row-id="${this.escapeHtml(recId)}" value="${safeVal}"${emailAttrs}${dirtyAttrs} onclick="event.stopPropagation()" oninput="app.trackEditChange('${this.escapeHtml(recId)}', '${col.key}', this.value, this)">`;
         }
-        let rawValue = col.computed ? this.formatRow(r, col.key, page) : r[col.key];
+
+        // A non-selected edited row stays readable with its pending value.
+        // This is intentionally display-only; the backend is updated only when
+        // the user presses the Save button.
+        let rawValue = hasPendingValue
+            ? pendingValue
+            : (col.computed ? this.formatRow(r, col.key, page) : r[col.key]);
 
         if (col.format === 'customDate' && rawValue) {
             rawValue = this.formatCustomDate(rawValue);
@@ -2268,11 +2337,14 @@ class DashboardApp {
             if (col.key === 'status') return this.renderBadge(rawValue);
         }
 
+        let finalValue = value;
         if (col.validateAddress && rawValue && !this.isValidAddressFormat(rawValue)) {
-            return `<span class="invalid-address" title="Invalid address format. Use at least three comma-separated parts. Spaces and dashes are allowed, with one optional trailing comma.">${value}</span>`;
+            finalValue = `<span class="invalid-address" title="Invalid address format. Use at least three comma-separated parts. Spaces and dashes are allowed, with one optional trailing comma.">${value}</span>`;
         }
 
-        return value;
+        return pendingChanged
+            ? this.renderPendingEditDisplay(finalValue, rawValue)
+            : finalValue;
     }
 
     // ============================================
@@ -2865,6 +2937,65 @@ class DashboardApp {
     }
 
     // ============================================
+    // INLINE EDITING STATE HELPERS
+    // ============================================
+    hasPendingEditValue(recId, field) {
+        const rowEdits = (this.pendingEdits || {})[recId];
+        return !!rowEdits && Object.prototype.hasOwnProperty.call(rowEdits, field);
+    }
+
+    getPendingEditValue(recId, field, fallback = '') {
+        return this.hasPendingEditValue(recId, field)
+            ? this.pendingEdits[recId][field]
+            : fallback;
+    }
+
+    isPendingFieldChanged(recId, field) {
+        if (!this.hasPendingEditValue(recId, field)) return false;
+        const snapshots = this.originalRowSnapshots || {};
+        const originalRow = snapshots[recId] || {};
+        const oldVal = Object.prototype.hasOwnProperty.call(originalRow, field)
+            ? originalRow[field]
+            : '';
+        const newVal = this.pendingEdits[recId][field];
+        return String(oldVal == null ? '' : oldVal) !== String(newVal == null ? '' : newVal);
+    }
+
+    getPendingRowSummary(recId) {
+        const rowEdits = (this.pendingEdits || {})[recId] || {};
+        const changedKeys = Object.keys(rowEdits).filter(field => this.isPendingFieldChanged(recId, field));
+        return {
+            changedFields: changedKeys.length,
+            changedKeys
+        };
+    }
+
+    renderPendingEditDisplay(renderedValue, rawValue) {
+        const visibleValue = renderedValue || `<span style="font-style:italic;color:var(--text-muted);">(cleared)</span>`;
+        return `<span style="display:inline-flex;align-items:center;gap:6px;max-width:100%;">
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${visibleValue}</span>
+            <span title="Unsaved edit" aria-label="Unsaved edit" style="display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;padding:2px 6px;border-radius:999px;background:#dcfce7;color:#047857;border:1px solid #86efac;font-size:10px;font-weight:800;line-height:1.2;text-transform:none;letter-spacing:0;"><i class="fas fa-pen" aria-hidden="true"></i>Edited</span>
+        </span>`;
+    }
+
+    updateEditActionState() {
+        const saveBtn = document.querySelector('.footer-save-action');
+        if (!saveBtn) return;
+        const { changedRows, changedFields } = this.countPendingChangedRows();
+        saveBtn.disabled = changedRows === 0;
+        saveBtn.setAttribute('aria-disabled', changedRows === 0 ? 'true' : 'false');
+        saveBtn.title = changedRows === 0
+            ? 'No pending changes yet'
+            : `Save ${changedFields} change${changedFields === 1 ? '' : 's'} across ${changedRows} row${changedRows === 1 ? '' : 's'}`;
+        saveBtn.style.opacity = changedRows === 0 ? '0.5' : '1';
+        saveBtn.style.cursor = changedRows === 0 ? 'not-allowed' : 'pointer';
+        saveBtn.innerHTML = changedRows > 0
+            ? `<i class="fas fa-save"></i><span aria-hidden="true" style="position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#059669;color:#fff;border:2px solid var(--bg-card);font-size:10px;font-weight:800;line-height:13px;text-align:center;">${changedRows}</span>`
+            : '<i class="fas fa-save"></i>';
+        saveBtn.style.position = 'relative';
+    }
+
+    // ============================================
     // INLINE EDITING (Feature: Edit Mode + Password Gate)
     // ============================================
     toggleEditMode() {
@@ -2892,7 +3023,77 @@ class DashboardApp {
         this.promptEditPassword();
     }
 
+    captureEditAuthSearchState() {
+        this._editAuthSearchRestoreTimers.forEach(timer => window.clearTimeout(timer));
+        this._editAuthSearchRestoreTimers = [];
+        window.clearTimeout(this.searchDebounce);
+
+        const input = document.getElementById('global-search');
+        // currentSearch is the authoritative applied filter. Using it instead
+        // of a possibly autofilled DOM value prevents a credential manager from
+        // becoming the source of truth for the table search.
+        const stableValue = String(this.currentSearch || '');
+        this._editAuthSearchSnapshot = {
+            page: this.currentPage,
+            currentSearch: stableValue,
+            inputValue: stableValue,
+            paginationPage: this.pagination.page
+        };
+        this._editAuthSearchGuardUntil = Date.now() + 3500;
+
+        if (input && input.value !== stableValue) input.value = stableValue;
+        const clearBtn = document.getElementById('search-clear-btn');
+        if (clearBtn) clearBtn.classList.toggle('visible', !!stableValue);
+    }
+
+    isEditAuthSearchGuardActive() {
+        return !!document.getElementById('edit-password-modal') ||
+            (!!this._editAuthSearchSnapshot && Date.now() < this._editAuthSearchGuardUntil);
+    }
+
+    restoreEditAuthSearchState(renderIfChanged = false) {
+        const snapshot = this._editAuthSearchSnapshot;
+        if (!snapshot) return false;
+        window.clearTimeout(this.searchDebounce);
+
+        const samePage = this.currentPage === snapshot.page;
+        const filterChanged = samePage && this.currentSearch !== snapshot.currentSearch;
+        this.currentSearch = snapshot.currentSearch;
+        if (samePage) this.pagination.page = snapshot.paginationPage;
+
+        const input = document.getElementById('global-search');
+        if (input && input.value !== snapshot.inputValue) input.value = snapshot.inputValue;
+        const clearBtn = document.getElementById('search-clear-btn');
+        if (clearBtn) clearBtn.classList.toggle('visible', !!snapshot.inputValue);
+
+        if (filterChanged && renderIfChanged) {
+            this.renderPagePreservingTablePosition(this.selectedEditRow);
+        }
+        return filterChanged;
+    }
+
+    releaseEditAuthSearchGuard() {
+        // Password managers sometimes write their autofill value a few frames
+        // after the modal closes, so restore the search more than once.
+        this.restoreEditAuthSearchState(true);
+        this._editAuthSearchRestoreTimers.forEach(timer => window.clearTimeout(timer));
+        this._editAuthSearchRestoreTimers = [0, 80, 240, 650].map(delay =>
+            window.setTimeout(() => this.restoreEditAuthSearchState(true), delay)
+        );
+        this._editAuthSearchRestoreTimers.push(window.setTimeout(() => {
+            this.restoreEditAuthSearchState(true);
+            this._editAuthSearchSnapshot = null;
+            this._editAuthSearchGuardUntil = 0;
+            this._editAuthSearchRestoreTimers = [];
+        }, 900));
+    }
+
     promptEditPassword() {
+        // Freeze the applied table search before a password field enters the DOM.
+        // This prevents browser credential autofill from replacing it with the
+        // dashboard login name and producing a false "No matching records" view.
+        this.captureEditAuthSearchState();
+
         // Build password modal on the fly
         let existing = document.getElementById('edit-password-modal');
         if (existing) existing.remove();
@@ -2908,9 +3109,10 @@ class DashboardApp {
                 </div>
                 <div class="modal-body">
                     <p class="modal-desc">Enter the editor password to unlock inline editing for this session.</p>
+                    <input type="text" name="username" value="CARES Editor" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:fixed;left:-10000px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none;">
                     <div class="form-group">
-                        <label><i class="fas fa-key"></i> Password</label>
-                        <input type="password" id="edit-password-input" class="form-input" placeholder="Enter editor password" autocomplete="off">
+                        <label for="edit-password-input"><i class="fas fa-key"></i> Password</label>
+                        <input type="password" id="edit-password-input" name="cares-editor-passcode" class="form-input" placeholder="Enter editor password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" readonly>
                     </div>
                     <div id="edit-password-error" style="color:var(--red-text);font-size:0.8rem;margin-top:0.5rem;min-height:1rem;"></div>
                 </div>
@@ -2924,7 +3126,11 @@ class DashboardApp {
         document.body.style.overflow = 'hidden';
         const input = document.getElementById('edit-password-input');
         if (input) {
-            setTimeout(() => input.focus(), 50);
+            setTimeout(() => {
+                input.readOnly = false;
+                input.focus({ preventScroll: true });
+                this.restoreEditAuthSearchState(true);
+            }, 80);
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); this.submitEditPassword(); }
                 if (e.key === 'Escape') { e.preventDefault(); this.closeEditPasswordModal(); }
@@ -2955,6 +3161,7 @@ class DashboardApp {
         const modal = document.getElementById('edit-password-modal');
         if (modal) modal.remove();
         document.body.style.overflow = '';
+        this.releaseEditAuthSearchGuard();
     }
 
     handleEditRowClick(event, recId) {
@@ -2986,16 +3193,37 @@ class DashboardApp {
         this.openSaveConfirmModal();
     }
 
-    trackEditChange(recId, field, value) {
+    trackEditChange(recId, field, value, sourceInput = null) {
         if (this.isSavingEdits || !this.settings.editMode) return;
         this.pendingEdits = this.pendingEdits || {};
         this.originalRowSnapshots = this.originalRowSnapshots || {};
         if (!this.pendingEdits[recId]) this.pendingEdits[recId] = {};
-        // Ensure we have an original snapshot so we can revert on "No"
+        // Ensure we have an original snapshot so we can revert on "No".
         if (!this.originalRowSnapshots[recId]) {
             this.originalRowSnapshots[recId] = this.snapshotEditableFields(recId);
         }
-        this.pendingEdits[recId][field] = value;
+
+        const original = this.originalRowSnapshots[recId] || {};
+        const oldVal = String(original[field] == null ? '' : original[field]);
+        const newVal = String(value == null ? '' : value);
+        const changed = oldVal !== newVal;
+
+        if (changed) {
+            this.pendingEdits[recId][field] = value;
+        } else {
+            delete this.pendingEdits[recId][field];
+            if (Object.keys(this.pendingEdits[recId]).length === 0) {
+                delete this.pendingEdits[recId];
+            }
+        }
+
+        if (sourceInput) {
+            sourceInput.dataset.dirty = changed ? 'true' : 'false';
+            sourceInput.title = changed ? 'Unsaved change' : '';
+            sourceInput.style.borderColor = changed ? '#059669' : '';
+            sourceInput.style.boxShadow = changed ? '0 0 0 3px rgba(5,150,105,.16)' : '';
+        }
+        this.updateEditActionState();
     }
 
     // ============================================
@@ -4139,6 +4367,14 @@ class DashboardApp {
     }
 
     handleSearch(value) {
+        const searchInput = document.getElementById('global-search');
+        const modalOpen = !!document.getElementById('edit-password-modal');
+        const userIsActivelySearching = !modalOpen && searchInput && document.activeElement === searchInput;
+        if (this.isEditAuthSearchGuardActive() && !userIsActivelySearching) {
+            this.restoreEditAuthSearchState(true);
+            return;
+        }
+
         const clearBtn = document.getElementById('search-clear-btn');
         if (clearBtn) clearBtn.classList.toggle('visible', !!value);
         clearTimeout(this.searchDebounce);
@@ -4837,6 +5073,15 @@ class DashboardApp {
     initSearchClear() {
         const input = document.getElementById('global-search');
         const btn = document.getElementById('search-clear-btn');
+        if (input) {
+            // Explicitly identify this as a record filter rather than a login
+            // username field so password managers do not target it.
+            input.setAttribute('name', 'cares-record-search');
+            input.setAttribute('autocomplete', 'off');
+            input.setAttribute('data-lpignore', 'true');
+            input.setAttribute('data-1p-ignore', 'true');
+            input.setAttribute('aria-autocomplete', 'none');
+        }
         if (input && this.currentSearch) {
             input.value = this.currentSearch;
         }
