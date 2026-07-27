@@ -8,7 +8,8 @@ const CONFIG = {
     STALE_THRESHOLD_MS: 300000,
     AUTO_REFRESH_INTERVAL_MS: 60000,
     LIVE_INDICATOR_DURATION_MS: 2000,
-    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbwatvlnMcj7dmKOML_xMjgyFS5iYgK1mQ-ZfS759wSjQWckgKxvR8-XJp3h6F_WBMY/exec'
+    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbx91abcBythExsxaG45d4KDSLbfLO4kFTsEoA7z8RTwPYq20FOEyC2cCr7I-YDC9Sa5/exec'
+    
 };
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
