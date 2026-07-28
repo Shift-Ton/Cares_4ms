@@ -5,7 +5,7 @@
 
 const CONFIG = {
     DEBOUNCE_MS: 150,
-    STALE_THRESHOLD_MS: 300000,A
+    STALE_THRESHOLD_MS: 300000,
     AUTO_REFRESH_INTERVAL_MS: 60000,
     LIVE_INDICATOR_DURATION_MS: 2000,
     JSONP_TIMEOUT_MS: 90000,
@@ -205,6 +205,9 @@ class DashboardApp {
         this.editAuthorized = false;
         this.selectedEditRow = null;
         this.isSavingEdits = false;
+        this.isLoggingIn = false;
+        this.searchSuggestionLimit = 50;
+        this.recentSearchLimit = 8;
         this.pendingEdits = {};
         this.originalRowSnapshots = {};
         // Keeps the record search isolated from browser/password-manager autofill
@@ -269,6 +272,7 @@ class DashboardApp {
         this.loadLastFetch();
         this.loadColumnFilters();
         this.loadEncodedRecords();
+        this.setupLoginAutofill();
         this.bindEvents();
         this.initSearchClear();
         this.ensureEditRuntimeStyles();
@@ -356,39 +360,130 @@ class DashboardApp {
         }
     }
 
-    handleLogin(e) {
-        e.preventDefault();
-        const user = document.getElementById('login-user').value.trim();
-        const pass = document.getElementById('login-pass').value;
+    setupLoginAutofill() {
+        const form = document.getElementById('login-form');
+        const userInput = document.getElementById('login-user');
+        const passInput = document.getElementById('login-pass');
+
+        // Remove the inline submit handler and use the bound listener instead.
+        // This prevents login from failing when a browser blocks inline handlers
+        // or when the global app object is not yet available during page startup.
+        if (form) {
+            form.removeAttribute('onsubmit');
+            form.setAttribute('autocomplete', 'on');
+        }
+
+        if (userInput) {
+            userInput.setAttribute('name', 'username');
+            userInput.setAttribute('autocomplete', 'username');
+            userInput.setAttribute('autocapitalize', 'none');
+            userInput.setAttribute('spellcheck', 'false');
+
+            // Remember only the username. Passwords remain managed by the
+            // browser/password manager and are never stored in localStorage.
+            try {
+                const savedUsername = localStorage.getItem('cares_last_login_username');
+                if (!userInput.value && savedUsername) userInput.value = savedUsername;
+            } catch (error) {
+                console.warn('Saved login name could not be restored:', error);
+            }
+        }
+
+        if (passInput) {
+            passInput.setAttribute('name', 'password');
+            passInput.setAttribute('autocomplete', 'current-password');
+        }
+    }
+
+    setLoginBusy(busy) {
+        const form = document.getElementById('login-form');
+        const button = form?.querySelector('.login-submit');
+        const text = button?.querySelector('.login-text');
+        const arrow = button?.querySelector('.login-arrow');
+
+        if (form) form.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (button) button.disabled = !!busy;
+        if (text) text.textContent = busy ? 'Signing In…' : 'Sign In';
+        if (arrow) arrow.className = busy
+            ? 'fas fa-circle-notch fa-spin login-arrow'
+            : 'fas fa-arrow-right login-arrow';
+    }
+
+    async handleLogin(e) {
+        if (e?.preventDefault) e.preventDefault();
+        if (this.isLoggingIn) return;
+
+        const userInput = document.getElementById('login-user');
+        const passInput = document.getElementById('login-pass');
         const errorEl = document.getElementById('login-error');
         const card = document.querySelector('.login-card');
-        if (user === 'AdminTon' && pass === '4CaresCheqList') {
-            errorEl.textContent = '';
-            sessionStorage.setItem('dashboard_session', 'authenticated');
-            card.style.animation = 'loginSlideOut 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards';
-            setTimeout(async () => {
-                // Show the full-screen loader first, then remove the login card.
-                // The loader stays above the app until every configured module
-                // has either loaded or returned an error.
-                this.showLoading(true, {
-                    progress: 6,
-                    title: 'Welcome to CARES',
-                    message: 'Starting your management dashboard…'
-                });
-                this.hideLogin();
-                this.navigateTo('alumni-info');
 
+        if (!userInput || !passInput || !errorEl || !card) {
+            console.error('Login form is incomplete or unavailable.');
+            return;
+        }
+
+        // Username is case-insensitive. Trimming both fields also prevents an
+        // accidental copied space from making valid credentials appear invalid.
+        const enteredUsername = String(userInput.value || '').trim();
+        const normalizedUsername = enteredUsername.toLowerCase();
+        const password = String(passInput.value || '').trim();
+        const validUsername = normalizedUsername === 'adminton';
+        const validPassword = password === '4CaresCheqList';
+
+        if (!validUsername || !validPassword) {
+            errorEl.textContent = 'Invalid username or password';
+            card.style.animation = 'none';
+            void card.offsetHeight;
+            card.style.animation = 'shake 0.4s ease';
+            passInput.focus();
+            passInput.select();
+            return;
+        }
+
+        this.isLoggingIn = true;
+        this.setLoginBusy(true);
+        errorEl.textContent = '';
+
+        try {
+            localStorage.setItem('cares_last_login_username', enteredUsername || 'AdminTon');
+        } catch (error) {
+            console.warn('Login name could not be remembered:', error);
+        }
+
+        try {
+            sessionStorage.setItem('dashboard_session', 'authenticated');
+        } catch (error) {
+            console.warn('Session storage is unavailable; continuing with this login:', error);
+        }
+
+        card.style.animation = 'loginSlideOut 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards';
+
+        // Hide the login first. Data-source problems must not make a correct
+        // username/password look like a failed login.
+        window.setTimeout(async () => {
+            this.showLoading(true, {
+                progress: 6,
+                title: 'Welcome to CARES',
+                message: 'Starting your management dashboard…'
+            });
+            this.hideLogin();
+            this.navigateTo('alumni-info');
+
+            try {
                 this.setLoadingProgress(16, 'Loading shared data-source settings…');
                 await this.ensureEndpointsReady();
                 this.setLoadingProgress(28, 'Connected. Preparing Google Sheets records…');
                 await this.fetchAllDataOnInit();
-            }, 500);
-        } else {
-            errorEl.textContent = 'Invalid username or password';
-            card.style.animation = 'none';
-            card.offsetHeight;
-            card.style.animation = 'shake 0.4s ease';
-        }
+            } catch (error) {
+                console.error('Dashboard startup after login failed:', error);
+                this.showLoading(false, { message: 'Dashboard opened' });
+                this.showToast('Signed in, but some records could not be loaded. Use Refresh to try again.', 'warning');
+            } finally {
+                this.isLoggingIn = false;
+                this.setLoginBusy(false);
+            }
+        }, 420);
     }
 
     hideLogin() {
@@ -1326,6 +1421,7 @@ class DashboardApp {
         this.setLoadingProgress(95, 'Building the tables, filters, and record counts…');
         this.updateDashboardCounts();
         this.renderPage();
+        this.refreshSearchSuggestions();
 
         // Give the browser one paint frame to finish the table before closing
         // the full-screen loading layer.
@@ -1520,6 +1616,7 @@ class DashboardApp {
             this.data[mod.dataKey] = selected.records;
             this.lastFetch[page] = Date.now();
             this.saveLastFetch();
+            if (page === this.currentPage) this.refreshSearchSuggestions();
 
             if (showToast) {
                 if (selected.records.length === 0) {
@@ -4462,6 +4559,8 @@ class DashboardApp {
         if (!input) return;
         const value = input.value.trim();
         this.applySearchValue(value);
+        if (value) this.rememberSearchTerm(value);
+        this.refreshSearchSuggestions(value);
         const mod = MODULES[this.currentPage];
         const records = this.data[mod.dataKey] || [];
         const filtered = this.filterRecords(records, this.currentPage);
@@ -5070,25 +5169,114 @@ class DashboardApp {
         target.textContent = `Updated ${timeStr}`;
     }
 
+    getRecentSearches() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('cares_recent_record_searches') || '[]');
+            return Array.isArray(saved)
+                ? saved.map(value => String(value || '').trim()).filter(Boolean)
+                : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    rememberSearchTerm(value) {
+        const term = String(value || '').trim();
+        if (!term) return;
+
+        const recent = this.getRecentSearches()
+            .filter(item => item.toLowerCase() !== term.toLowerCase());
+        recent.unshift(term);
+
+        try {
+            localStorage.setItem(
+                'cares_recent_record_searches',
+                JSON.stringify(recent.slice(0, this.recentSearchLimit))
+            );
+        } catch (error) {
+            console.warn('Recent searches could not be saved:', error);
+        }
+    }
+
+    refreshSearchSuggestions(query = '') {
+        const input = document.getElementById('global-search');
+        const list = document.getElementById('cares-search-suggestions');
+        if (!input || !list) return;
+
+        const searchText = String(query || input.value || '').trim().toLowerCase();
+        const unique = new Set();
+        const suggestions = [];
+        const addSuggestion = value => {
+            const clean = String(value ?? '').replace(/\s+/g, ' ').trim();
+            if (!clean || clean.length < 2) return;
+            if (searchText && !clean.toLowerCase().includes(searchText)) return;
+            const key = clean.toLowerCase();
+            if (unique.has(key) || suggestions.length >= this.searchSuggestionLimit) return;
+            unique.add(key);
+            suggestions.push(clean);
+        };
+
+        // Recent user searches appear first.
+        this.getRecentSearches().forEach(addSuggestion);
+
+        // Add useful values from the currently selected module so the search
+        // field can suggest names, emails, courses, batches, campuses, and places.
+        const mod = MODULES[this.currentPage];
+        const records = mod ? (this.data[mod.dataKey] || []) : [];
+        const preferredKeys = [
+            'fullName', 'email', 'degree', 'course', 'yearGraduated', 'batch',
+            'campus', 'college', 'campusCollege', 'homeAddress', 'address',
+            'telephone', 'mobile', 'employer', 'position'
+        ];
+
+        for (const record of records) {
+            for (const key of preferredKeys) {
+                addSuggestion(record?.[key]);
+                if (suggestions.length >= this.searchSuggestionLimit) break;
+            }
+            if (suggestions.length >= this.searchSuggestionLimit) break;
+        }
+
+        list.replaceChildren(...suggestions.map(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            return option;
+        }));
+    }
+
     initSearchClear() {
         const input = document.getElementById('global-search');
         const btn = document.getElementById('search-clear-btn');
         if (input) {
-            // Explicitly identify this as a record filter rather than a login
-            // username field so password managers do not target it.
+            // Use a custom record suggestion list instead of browser credential
+            // autofill. This keeps saved login names out of the search bar while
+            // still providing useful auto-fill suggestions to the user.
             input.setAttribute('name', 'cares-record-search');
             input.setAttribute('autocomplete', 'off');
             input.setAttribute('data-lpignore', 'true');
             input.setAttribute('data-1p-ignore', 'true');
-            input.setAttribute('aria-autocomplete', 'none');
+            input.setAttribute('aria-autocomplete', 'list');
+            input.setAttribute('list', 'cares-search-suggestions');
+
+            let list = document.getElementById('cares-search-suggestions');
+            if (!list) {
+                list = document.createElement('datalist');
+                list.id = 'cares-search-suggestions';
+                document.body.appendChild(list);
+            }
         }
-        if (input && this.currentSearch) {
-            input.value = this.currentSearch;
-        }
+        if (input && this.currentSearch) input.value = this.currentSearch;
         if (input && btn && input.value) btn.classList.add('visible');
+        this.refreshSearchSuggestions();
     }
 
     bindEvents() {
+        const loginForm = document.getElementById('login-form');
+        if (loginForm && loginForm.dataset.loginBound !== 'true') {
+            loginForm.dataset.loginBound = 'true';
+            loginForm.addEventListener('submit', event => this.handleLogin(event));
+        }
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 const header = document.querySelector('.top-header');
@@ -5153,6 +5341,20 @@ class DashboardApp {
                 } else {
                     searchClear.classList.remove('visible');
                 }
+                this.refreshSearchSuggestions(searchInput.value);
+            });
+            searchInput.addEventListener('focus', () => {
+                this.refreshSearchSuggestions(searchInput.value);
+            });
+            searchInput.addEventListener('keydown', event => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    this.triggerSearch();
+                }
+            });
+            searchInput.addEventListener('change', () => {
+                const value = searchInput.value.trim();
+                if (value) this.rememberSearchTerm(value);
             });
         }
 
@@ -5772,9 +5974,67 @@ class DashboardApp {
 
 let app = null;
 
-if (window.location.protocol === 'file:') {
-    document.documentElement.classList.add('local-file-origin');
-    console.info('CARES dashboard paused: use START_DASHBOARD.bat so the page runs from http://127.0.0.1:5500.');
+function installMemoryStorageFallback(storageName) {
+    try {
+        const storage = window[storageName];
+        const probe = `__cares_${storageName}_probe__`;
+        storage.setItem(probe, '1');
+        storage.removeItem(probe);
+        return true;
+    } catch (error) {
+        const values = new Map();
+        const fallback = {
+            get length() { return values.size; },
+            key(index) { return Array.from(values.keys())[index] ?? null; },
+            getItem(key) {
+                const normalized = String(key);
+                return values.has(normalized) ? values.get(normalized) : null;
+            },
+            setItem(key, value) { values.set(String(key), String(value)); },
+            removeItem(key) { values.delete(String(key)); },
+            clear() { values.clear(); }
+        };
+
+        try {
+            Object.defineProperty(window, storageName, {
+                configurable: true,
+                enumerable: true,
+                value: fallback
+            });
+            return true;
+        } catch (defineError) {
+            console.warn(`${storageName} is unavailable:`, defineError);
+            return false;
+        }
+    }
+}
+
+function bootstrapDashboard() {
+    // Verify storage before DashboardApp reads saved preferences or sessions.
+    // A small in-memory fallback keeps login usable in restrictive previews.
+    installMemoryStorageFallback('localStorage');
+    installMemoryStorageFallback('sessionStorage');
+
+    // Keep the dashboard usable even when index.html is opened directly. Some
+    // Google Apps Script requests may still require HTTP/HTTPS, but login and
+    // the rest of the interface should never be disabled by the file protocol.
+    if (window.location.protocol === 'file:') {
+        document.documentElement.classList.remove('local-file-origin');
+        console.info('CARES dashboard running in local preview mode. Use HTTP/HTTPS if a data source is blocked.');
+    }
+
+    try {
+        app = new DashboardApp();
+        window.app = app;
+    } catch (error) {
+        console.error('Dashboard startup failed:', error);
+        const loginError = document.getElementById('login-error');
+        if (loginError) loginError.textContent = 'The dashboard could not start. Refresh the page and try again.';
+    }
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrapDashboard, { once: true });
 } else {
-    app = new DashboardApp();
+    bootstrapDashboard();
 }
