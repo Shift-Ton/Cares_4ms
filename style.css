@@ -13047,3 +13047,117 @@ input[list="cares-search-suggestions"] + datalist {
     }
 }
 
+
+
+/* ============================================================
+   V3.15.2 — GUARANTEED HAPPY RECONNECTION SELECTORS
+   The JavaScript now places connection-restored on the card itself. These
+   descendant selectors also support the state on the outer modal, making the
+   visual transition resilient to either class location.
+   ============================================================ */
+#offline-modal.connection-restored .offline-card {
+    border-color: rgba(16, 185, 129, 0.38) !important;
+    box-shadow:
+        0 26px 70px rgba(5, 150, 105, 0.19),
+        0 0 0 1px rgba(255, 255, 255, 0.62) inset !important;
+}
+
+#offline-modal.connection-restored .offline-heading h3 {
+    color: #059669 !important;
+}
+
+#offline-modal.connection-restored .offline-status-icon,
+#offline-modal.connection-restored .offline-wifi-badge {
+    color: #059669 !important;
+    background: #dcfce7 !important;
+    border-color: #86efac !important;
+    box-shadow: 0 8px 20px rgba(5, 150, 105, 0.22) !important;
+    animation: restoredSignalPulse 1.45s ease-in-out infinite !important;
+}
+
+#offline-modal.connection-restored .offline-wifi-badge::after {
+    opacity: 0 !important;
+    transform: rotate(-45deg) scaleX(0) !important;
+}
+
+#offline-modal.connection-restored .offline-eye {
+    top: 47px !important;
+    width: 12px !important;
+    height: 7px !important;
+    background: transparent !important;
+    border-bottom: 3px solid #4b2e24 !important;
+    border-radius: 0 0 999px 999px !important;
+    animation: none !important;
+}
+
+#offline-modal.connection-restored .offline-eye::after {
+    display: none !important;
+}
+
+#offline-modal.connection-restored .offline-eye-left {
+    left: 26px !important;
+    transform: rotate(8deg) !important;
+}
+
+#offline-modal.connection-restored .offline-eye-right {
+    right: 26px !important;
+    transform: rotate(-8deg) !important;
+}
+
+#offline-modal.connection-restored .offline-mouth {
+    left: 40px !important;
+    top: 64px !important;
+    width: 22px !important;
+    height: 13px !important;
+    border-top: 0 !important;
+    border-bottom: 3px solid #6b3f31 !important;
+    border-radius: 0 0 999px 999px !important;
+    transform: none !important;
+}
+
+#offline-modal.connection-restored .offline-tear {
+    display: none !important;
+}
+
+#offline-modal.connection-restored .offline-arm-left {
+    top: 56px !important;
+    animation: restoredWaveLeft 1.05s ease-in-out infinite !important;
+}
+
+#offline-modal.connection-restored .offline-arm-right {
+    top: 56px !important;
+    animation: restoredWaveRight 1.05s ease-in-out infinite !important;
+}
+
+#offline-modal.connection-restored .offline-mascot {
+    animation: restoredMascotBounce 1.5s ease-in-out infinite !important;
+    filter: drop-shadow(0 14px 16px rgba(5, 150, 105, 0.18)) !important;
+}
+
+#offline-modal.connection-restored .offline-retry-count {
+    color: #047857 !important;
+    font-weight: 700 !important;
+}
+
+[data-theme="dark"] #offline-modal.connection-restored .offline-card {
+    border-color: rgba(52, 211, 153, 0.42) !important;
+    box-shadow:
+        0 28px 74px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(52, 211, 153, 0.1) inset !important;
+}
+
+[data-theme="dark"] #offline-modal.connection-restored .offline-status-icon,
+[data-theme="dark"] #offline-modal.connection-restored .offline-wifi-badge {
+    color: #6ee7b7 !important;
+    background: #123d32 !important;
+    border-color: #24735c !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #offline-modal.connection-restored .offline-mascot,
+    #offline-modal.connection-restored .offline-arm,
+    #offline-modal.connection-restored .offline-status-icon,
+    #offline-modal.connection-restored .offline-wifi-badge {
+        animation: none !important;
+    }
+}
