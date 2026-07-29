@@ -5564,12 +5564,17 @@ class DashboardApp {
 
     resetOfflineModalState() {
         const modal = document.getElementById('offline-modal');
+        const card = modal?.querySelector('.offline-card');
         const title = document.getElementById('offline-title');
         const description = document.getElementById('offline-description');
         const retryCount = document.getElementById('offline-retry-count');
         const retryBtn = document.getElementById('offline-retry-btn');
 
+        // Keep the state on both the modal and its visual card. The original
+        // update only added the class to the outer modal while the happy-face
+        // CSS expected it on .offline-card, so the mascot never changed.
         modal?.classList.remove('connection-restored');
+        card?.classList.remove('connection-restored');
 
         if (title) title.textContent = 'No Internet Connection';
         if (description) {
@@ -5646,7 +5651,9 @@ class DashboardApp {
             return;
         }
 
+        const card = modal.querySelector('.offline-card');
         modal.classList.add('connection-restored');
+        card?.classList.add('connection-restored');
         modal.classList.remove('hidden');
 
         if (title) title.textContent = 'Internet Connection Restored';
@@ -5671,6 +5678,7 @@ class DashboardApp {
         if (modal) {
             modal.classList.add('hidden');
             modal.classList.remove('connection-restored');
+            modal.querySelector('.offline-card')?.classList.remove('connection-restored');
             if (!document.body.classList.contains('dashboard-loading')) {
                 document.body.style.overflow = '';
             }
