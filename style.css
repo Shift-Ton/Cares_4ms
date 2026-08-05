@@ -13230,3 +13230,73 @@ input[list="cares-search-suggestions"] + datalist {
         width: 330px;
     }
 }
+
+/* ============================================================
+   v4.4 — SINGLE-LINE DESKTOP TABLE ROWS
+   Keep every desktop table record on one horizontal line.
+   Long values expand the table and use horizontal scrolling.
+   ============================================================ */
+@media (min-width: 769px) {
+    .table-wrapper {
+        overflow-x: auto !important;
+        overflow-y: auto;
+    }
+
+    .data-table {
+        width: max-content !important;
+        min-width: 100% !important;
+        table-layout: auto !important;
+    }
+
+    .data-table th,
+    .data-table td,
+    .data-table td[data-column-key="schedule"],
+    .data-table td[data-column-key="timestamp"],
+    .data-table td[data-column-key="fullName"] {
+        white-space: nowrap !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
+        max-width: none !important;
+    }
+
+    .data-table td {
+        overflow: visible !important;
+        text-overflow: clip !important;
+        line-height: 1.25 !important;
+    }
+
+    .data-table th[data-column-key="schedule"],
+    .data-table td[data-column-key="schedule"] {
+        min-width: 300px !important;
+        width: auto !important;
+    }
+
+    .data-table th[data-column-key="timestamp"],
+    .data-table td[data-column-key="timestamp"] {
+        min-width: 255px !important;
+        width: auto !important;
+    }
+
+    .data-table th[data-column-key="fullName"],
+    .data-table td[data-column-key="fullName"] {
+        min-width: 390px !important;
+        width: auto !important;
+    }
+
+    .data-table td[data-column-key="fullName"] .mini-check,
+    .data-table td[data-column-key="fullName"] .mini-x,
+    .data-table td[data-column-key="fullName"] .new-sticker,
+    .data-table td[data-column-key="fullName"] .duplicate-badge,
+    .data-table td[data-column-key="fullName"] .mini-badge {
+        display: inline-flex !important;
+        flex: 0 0 auto;
+        vertical-align: middle !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+
+    .data-table tbody tr,
+    .data-table tbody td {
+        height: auto !important;
+    }
+}
