@@ -14,7 +14,7 @@ const CONFIG = {
     DATA_FETCH_TIMEOUT_MS: 35000,
     ENDPOINT_FAILURE_COOLDOWN_MS: 300000,
     ENDPOINT_HEALTH_CACHE_MS: 300000,
-    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbwatvlnMcj7dmKOML_xMjgyFS5iYgK1mQ-ZfS759wSjQWckgKxvR8-XJp3h6F_WBMY/exec'
+    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbz7q-mI-9qPn_OZ3W68A4ZYJI2XS7Gi6cWUpQRscJsfLbZPp-JWnKNXk_XT70kjZn-H/exec'
     
 };
 
