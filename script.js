@@ -11,7 +11,7 @@ const CONFIG = {
     LIVE_INDICATOR_DURATION_MS: 2000,
     FETCH_TIMEOUT_MS: 15000,
     DATA_FETCH_TIMEOUT_MS: 45000,
-    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbx91abcBythExsxaG45d4KDSLbfLO4kFTsEoA7z8RTwPYq20FOEyC2cCr7I-YDC9Sa5/exec'
+    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbwatvlnMcj7dmKOML_xMjgyFS5iYgK1mQ-ZfS759wSjQWckgKxvR8-XJp3h6F_WBMY/exec'
     
 };
 
