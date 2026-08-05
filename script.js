@@ -14,7 +14,7 @@ const CONFIG = {
     DATA_FETCH_TIMEOUT_MS: 35000,
     ENDPOINT_FAILURE_COOLDOWN_MS: 300000,
     ENDPOINT_HEALTH_CACHE_MS: 300000,
-    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbz7q-mI-9qPn_OZ3W68A4ZYJI2XS7Gi6cWUpQRscJsfLbZPp-JWnKNXk_XT70kjZn-H/exec'
+    DEFAULT_CONFIG_URL: 'https://script.google.com/macros/s/AKfycbwatvlnMcj7dmKOML_xMjgyFS5iYgK1mQ-ZfS759wSjQWckgKxvR8-XJp3h6F_WBMY/exec'
     
 };
 
@@ -1739,6 +1739,29 @@ class DashboardApp {
             'first generation college student', 'first generation college graduate'
         ]);
 
+        // Cross-version aliases used by the attendance and evaluation modules.
+        // This prevents blank cells when a legacy endpoint uses a descriptive
+        // field name instead of the dashboard's canonical key.
+        setAliasIfMissing('schedule', [
+            'webinar schedule', 'selected webinar schedule', 'selected schedule',
+            'session schedule', 'attendance schedule', 'webinar date and time',
+            'webinar date & time', 'date and time of webinar', 'webinar session',
+            'schedule attended', 'webinar attended'
+        ]);
+        setAliasIfMissing('fullName', [
+            'full name', 'participant name', 'name of participant', 'respondent name'
+        ]);
+        setAliasIfMissing('college', [
+            'college/campus', 'college / campus', 'campus/college', 'college or campus'
+        ]);
+        setAliasIfMissing('degree', [
+            'degree & specialization', 'degree and specialization',
+            'degree/specialization', 'degree program', 'course', 'program'
+        ]);
+        setAliasIfMissing('campus', [
+            'campus', 'rsu campus', 'college/campus', 'campus/college'
+        ]);
+
         const rowValue = normalized.sheetRow || normalized.__rowNum || getAliasValue([
             'sheet row', 'sheet row number', 'row number', 'rownum', '__rownum'
         ]);
@@ -2570,6 +2593,9 @@ class DashboardApp {
             if (col.format === 'customDate' && rawValue) {
                 rawValue = this.formatCustomDate(rawValue);
             }
+            if (page === 'legs-participation' && col.key === 'schedule' && !String(rawValue || '').trim()) {
+                rawValue = '—';
+            }
             if (col.format === 'birthdateWithAge' && rawValue) {
                 rawValue = this.formatBirthdateWithAge(rawValue);
             }
@@ -2636,6 +2662,10 @@ class DashboardApp {
 
         if (col.format === 'customDate' && rawValue) {
             rawValue = this.formatCustomDate(rawValue);
+        }
+
+        if (page === 'legs-participation' && col.key === 'schedule' && !String(rawValue || '').trim()) {
+            rawValue = '—';
         }
 
         if (col.format === 'birthdateWithAge' && rawValue) {
@@ -3003,97 +3033,158 @@ class DashboardApp {
         this.exitCssFullscreen();
     }
 
+    parseDashboardDate(dateInput) {
+        if (!dateInput) return null;
+        if (dateInput instanceof Date) {
+            return Number.isNaN(dateInput.getTime()) ? null : dateInput;
+        }
+
+        const value = String(dateInput).trim();
+        if (!value) return null;
+
+        // Google Forms commonly returns MM/DD/YYYY with either a 12-hour or
+        // 24-hour time. Parse it manually so browsers do not disagree.
+        let match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+|,\s*)(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(AM|PM)?$/i);
+        if (match) {
+            let hour = Number(match[4] || 0);
+            const minute = Number(match[5] || 0);
+            const second = Number(match[6] || 0);
+            const meridiem = String(match[7] || '').toLowerCase();
+            if (meridiem) {
+                hour %= 12;
+                if (meridiem === 'pm') hour += 12;
+            }
+            const parsed = new Date(Number(match[3]), Number(match[1]) - 1, Number(match[2]), hour, minute, second);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (match) {
+            const parsed = new Date(Number(match[3]), Number(match[1]) - 1, Number(match[2]));
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        // Parse an ISO date in local time to avoid the one-day UTC shift that
+        // can happen with new Date('YYYY-MM-DD').
+        match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{1,2})(?::(\d{2}))?(?::(\d{2}))?)?/);
+        if (match) {
+            const parsed = new Date(
+                Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+                Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0)
+            );
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
     formatCustomDate(dateInput) {
         if (!dateInput) return '';
-        let date;
-        if (dateInput instanceof Date) {
-            date = dateInput;
-        } else if (typeof dateInput === 'string') {
-            date = new Date(dateInput);
-            if (isNaN(date.getTime())) {
-                const parts = dateInput.split(/[/\-]/);
-                if (parts.length === 3) {
-                    date = new Date(parts[2], parts[0] - 1, parts[1]);
-                }
-            }
-        }
-        if (!date || isNaN(date.getTime())) return String(dateInput);
+        const date = this.parseDashboardDate(dateInput);
+        if (!date) return String(dateInput);
+
         const month = date.getMonth() + 1;
         const day = date.getDate();
         const year = date.getFullYear();
         const monthName = MONTH_NAMES[date.getMonth()];
         let hours = date.getHours();
-        const minutes = date.getMinutes().toString().padStart(2, '0');
-        const ampm = hours >= 12 ? 'pm' : 'am';
-        hours = hours % 12;
-        hours = hours ? hours : 12;
-        return `${month}/${day}/${year}(${monthName})${hours}:${minutes}${ampm}`;
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12 || 12;
+
+        // Readable spacing fixes values such as 5/26/2026(MAY)11:23AM.
+        return `${month}/${day}/${year} (${monthName}) ${hours}:${minutes} ${ampm}`;
     }
 
     extractDateKey(dateInput) {
         if (!dateInput) return '';
-        if (dateInput instanceof Date) {
-            return (dateInput.getMonth() + 1) + '/' + dateInput.getDate() + '/' + dateInput.getFullYear();
-        }
-        const str = String(dateInput).trim();
-        const usMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (usMatch) return parseInt(usMatch[1], 10) + '/' + parseInt(usMatch[2], 10) + '/' + usMatch[3];
-        const isoMatch = str.match(/(\d{4})-(\d{2})-(\d{2})/);
-        if (isoMatch) return parseInt(isoMatch[2], 10) + '/' + parseInt(isoMatch[3], 10) + '/' + isoMatch[1];
-        const d = new Date(str);
-        if (!isNaN(d.getTime())) {
-            return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
-        }
-        return '';
+        const value = String(dateInput).trim();
+
+        const usMatch = value.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+        if (usMatch) return `${Number(usMatch[1])}/${Number(usMatch[2])}/${usMatch[3]}`;
+
+        const isoMatch = value.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        if (isoMatch) return `${Number(isoMatch[2])}/${Number(isoMatch[3])}/${isoMatch[1]}`;
+
+        const date = this.parseDashboardDate(dateInput);
+        return date ? `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}` : '';
     }
 
     extractScheduleDateKey(scheduleStr) {
         if (!scheduleStr) return '';
-        const str = String(scheduleStr);
-        const m = str.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
-        if (m) {
-            const names = ['january','february','march','april','may','june',
-                           'july','august','september','october','november','december'];
-            const idx = names.indexOf(m[1].toLowerCase());
-            if (idx >= 0) return (idx + 1) + '/' + m[2] + '/' + m[3];
+        const value = String(scheduleStr).trim();
+
+        const usMatch = value.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+        if (usMatch) return `${Number(usMatch[1])}/${Number(usMatch[2])}/${usMatch[3]}`;
+
+        const isoMatch = value.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        if (isoMatch) return `${Number(isoMatch[2])}/${Number(isoMatch[3])}/${isoMatch[1]}`;
+
+        const monthMatch = value.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})\b/i);
+        if (monthMatch) {
+            const monthToken = monthMatch[1].slice(0, 3).toLowerCase();
+            const monthIndex = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(monthToken);
+            if (monthIndex >= 0) return `${monthIndex + 1}/${Number(monthMatch[2])}/${monthMatch[3]}`;
         }
-        const usMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (usMatch) return parseInt(usMatch[1], 10) + '/' + parseInt(usMatch[2], 10) + '/' + usMatch[3];
+
         return '';
     }
 
+    parseScheduleTimeRange(schedule) {
+        if (!schedule) return null;
+        const value = String(schedule)
+            .replace(/[–—−]/g, '-')
+            .replace(/\bto\b/gi, '-')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const match = value.match(/(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)/i);
+        if (!match) return null;
+
+        return {
+            start: this.toMinutes(Number(match[1]), Number(match[2] || 0), match[3].toLowerCase().replace(/\./g, '')),
+            end: this.toMinutes(Number(match[4]), Number(match[5] || 0), match[6].toLowerCase().replace(/\./g, ''))
+        };
+    }
+
     isScheduleMatch(r, page) {
-        if (page !== 'legs-participation') return false;
+        if (page !== 'legs-participation' || !r || !r.timestamp || !r.schedule) return false;
         const dateOk = this.isDateMatch(r.timestamp, r.schedule);
-        const timeOk = this.isTimeInRange(r.timestamp, r.schedule);
-        return dateOk && timeOk;
+        if (!dateOk) return false;
+
+        // Some attendance forms store only the webinar date. In that case the
+        // date match is sufficient. When a time range exists, validate it too.
+        const range = this.parseScheduleTimeRange(r.schedule);
+        return range ? this.isTimeInRange(r.timestamp, r.schedule) : true;
     }
 
     isDateMatch(timestamp, schedule) {
-        const ts = this.extractDateKey(timestamp);
-        const sc = this.extractScheduleDateKey(schedule);
-        return ts && sc && ts === sc;
+        const timestampKey = this.extractDateKey(timestamp);
+        const scheduleKey = this.extractScheduleDateKey(schedule);
+        return Boolean(timestampKey && scheduleKey && timestampKey === scheduleKey);
     }
 
     isTimeInRange(timestamp, schedule) {
         if (!timestamp || !schedule) return false;
-        const schedMatch = String(schedule).match(
-            /(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)\s*-\s*(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)/i
-        );
-        if (!schedMatch) return false;
-        const sH   = parseInt(schedMatch[1], 10);
-        const sM   = parseInt(schedMatch[2], 10);
-        const sAmpm = schedMatch[3].toLowerCase().replace(/\./g, '');
-        const eH   = parseInt(schedMatch[4], 10);
-        const eM   = parseInt(schedMatch[5], 10);
-        const eAmpm = schedMatch[6].toLowerCase().replace(/\./g, '');
-        const schedStart = this.toMinutes(sH, sM, sAmpm);
-        const schedEnd   = this.toMinutes(eH, eM, eAmpm);
-        const tsMinutes = this.extractTimestampMinutes(timestamp);
-        if (tsMinutes === null) return false;
+        const range = this.parseScheduleTimeRange(schedule);
+        if (!range) return true;
+
+        const timestampMinutes = this.extractTimestampMinutes(timestamp);
+        if (timestampMinutes === null) return false;
+
         const graceBefore = 15;
-        const graceAfter  = 30;
-        return tsMinutes >= (schedStart - graceBefore) && tsMinutes <= (schedEnd + graceAfter);
+        const graceAfter = 30;
+        let start = range.start - graceBefore;
+        let end = range.end + graceAfter;
+
+        // Support sessions that cross midnight.
+        if (end < start) {
+            const adjustedTimestamp = timestampMinutes < start ? timestampMinutes + 1440 : timestampMinutes;
+            end += 1440;
+            return adjustedTimestamp >= start && adjustedTimestamp <= end;
+        }
+        return timestampMinutes >= start && timestampMinutes <= end;
     }
 
     extractTimestampMinutes(timestamp) {
