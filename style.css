@@ -13161,3 +13161,72 @@ input[list="cares-search-suggestions"] + datalist {
         animation: none !important;
     }
 }
+
+/* ============================================
+   v4.3 — LEGS Attendance readability fixes
+   ============================================ */
+
+/* Keep the three verification columns readable without letting long names
+   and status stickers run outside the visible table area. */
+.data-table th[data-column-key="schedule"],
+.data-table td[data-column-key="schedule"] {
+    min-width: 250px;
+    width: 250px;
+    max-width: 360px;
+    white-space: normal;
+    line-height: 1.35;
+}
+
+.data-table th[data-column-key="timestamp"],
+.data-table td[data-column-key="timestamp"] {
+    min-width: 235px;
+    width: 235px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.data-table th[data-column-key="fullName"],
+.data-table td[data-column-key="fullName"] {
+    min-width: 360px;
+    width: 360px;
+    max-width: 520px;
+}
+
+.data-table td[data-column-key="fullName"] {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.35;
+}
+
+.data-table td[data-column-key="fullName"] .mini-check,
+.data-table td[data-column-key="fullName"] .mini-x,
+.data-table td[data-column-key="fullName"] .new-sticker,
+.data-table td[data-column-key="fullName"] .duplicate-badge {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-top: 0.15rem;
+    margin-bottom: 0.15rem;
+}
+
+/* A horizontal scrollbar is still available for the remaining columns, but
+   these widths make the first screen useful at ordinary laptop resolutions. */
+@media (max-width: 1366px) and (min-width: 769px) {
+    .data-table th[data-column-key="schedule"],
+    .data-table td[data-column-key="schedule"] {
+        min-width: 215px;
+        width: 215px;
+    }
+
+    .data-table th[data-column-key="timestamp"],
+    .data-table td[data-column-key="timestamp"] {
+        min-width: 220px;
+        width: 220px;
+    }
+
+    .data-table th[data-column-key="fullName"],
+    .data-table td[data-column-key="fullName"] {
+        min-width: 330px;
+        width: 330px;
+    }
+}
